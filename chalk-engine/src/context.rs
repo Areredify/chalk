@@ -110,7 +110,7 @@ pub trait ContextOps<I: Interner, C: Context<I>>: Sized + Clone + Debug {
     fn map_goal_from_canonical(
         &self,
         _: &UniverseMap,
-        value: &Canonical<InEnvironment<Goal<I>>>,
+        value: Canonical<InEnvironment<Goal<I>>>,
     ) -> Canonical<InEnvironment<Goal<I>>>;
 
     /// Convert a substitution *from* the canonical universes *into*
@@ -120,7 +120,7 @@ pub trait ContextOps<I: Interner, C: Context<I>>: Sized + Clone + Debug {
     fn map_subst_from_canonical(
         &self,
         _: &UniverseMap,
-        value: &Canonical<AnswerSubst<I>>,
+        value: Canonical<AnswerSubst<I>>,
     ) -> Canonical<AnswerSubst<I>>;
 
     fn interner(&self) -> &I;

@@ -7,7 +7,8 @@ use super::*;
 impl<I: Interner> InferenceTable<I> {
     /// Given the binders from a canonicalized value C, returns a
     /// substitution S mapping each free variable in C to a fresh
-    /// inference variable. This substitution can then be applied to
+    /// inference variable and instantiating placeholder variables.
+    /// This substitution can then be applied to
     /// C, which would be equivalent to
     /// `self.instantiate_canonical(v)`.
     pub(crate) fn fresh_subst(
@@ -17,9 +18,16 @@ impl<I: Interner> InferenceTable<I> {
     ) -> Substitution<I> {
         Substitution::from_iter(
             interner,
-            binders.iter().map(|kind| {
-                let param_infer_var = kind.map_ref(|&ui| self.new_variable(ui));
-                param_infer_var.to_generic_arg(interner)
+            binders.iter().map(|canonical_var| {
+                let (kind, source) = canonical_var.as_ref().into();
+                match source {
+                    CanonicalVarSource::Inference(universe) => {
+                        WithKind::new(kind, self.new_variable(*universe)).to_generic_arg(interner)
+                    }
+                    CanonicalVarSource::Placeholder(placeholder_idx) => {
+                        kind.to_placeholder_variable(interner, *placeholder_idx)
+                    }
+                }
             }),
         )
     }
@@ -38,21 +46,16 @@ impl<I: Interner> InferenceTable<I> {
     /// `binders`. This is used to apply a universally quantified
     /// clause like `forall X, 'Y. P => Q`. Here the `binders`
     /// argument is referring to `X, 'Y`.
-    pub(crate) fn instantiate_in<U, T>(
+    pub(crate) fn instantiate_in<T>(
         &mut self,
         interner: &I,
         universe: UniverseIndex,
-        binders: U,
+        binders: &[CanonicalVarKind<I>],
         arg: &T,
     ) -> T::Result
     where
         T: Fold<I>,
-        U: IntoIterator<Item = VariableKind<I>>,
     {
-        let binders: Vec<_> = binders
-            .into_iter()
-            .map(|pk| CanonicalVarKind::new(pk, universe))
-            .collect();
         let subst = self.fresh_subst(interner, &binders);
         subst.apply(&arg, interner)
     }
@@ -68,7 +71,12 @@ impl<I: Interner> InferenceTable<I> {
     {
         let (binders, value) = arg.into_binders_and_value(interner);
         let max_universe = self.max_universe;
-        self.instantiate_in(interner, max_universe, binders, &value)
+        let binders: Vec<_> = binders
+            .into_iter()
+            .map(|pk| CanonicalVarKind::new(pk, CanonicalVarSource::Inference(max_universe)))
+            .collect();
+
+        self.instantiate_in(interner, max_universe, &binders, &value)
     }
 
     pub fn instantiate_binders_universally<'a, T>(
@@ -81,24 +89,15 @@ impl<I: Interner> InferenceTable<I> {
     {
         let (binders, value) = arg.into_binders_and_value(interner);
         let ui = self.new_universe();
-        let parameters: Vec<_> = binders
+        let binders: Vec<_> = binders
             .into_iter()
             .enumerate()
             .map(|(idx, pk)| {
                 let placeholder_idx = PlaceholderIndex { ui, idx };
-                match pk {
-                    VariableKind::Lifetime => {
-                        let lt = placeholder_idx.to_lifetime(interner);
-                        lt.cast(interner)
-                    }
-                    VariableKind::Ty(_) => placeholder_idx.to_ty(interner).cast(interner),
-                    VariableKind::Const(ty) => {
-                        placeholder_idx.to_const(interner, ty).cast(interner)
-                    }
-                }
+                CanonicalVarKind::new(pk, CanonicalVarSource::Placeholder(placeholder_idx))
             })
             .collect();
-        Subst::apply(interner, &parameters, &value)
+        self.instantiate_in(interner, ui, &binders, &value)
     }
 }
 

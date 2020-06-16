@@ -622,11 +622,17 @@ impl<'forest, I: Interner, C: Context<I> + 'forest, CO: ContextOps<I, C> + 'fore
                 } = selected_subgoal;
                 let table_goal = &self.context.map_goal_from_canonical(
                     &universe_map,
-                    &self.forest.tables[subgoal_table].table_goal.canonical,
+                    self.forest.tables[subgoal_table]
+                        .table_goal
+                        .canonical
+                        .clone(),
                 );
                 let answer_subst = &self.context.map_subst_from_canonical(
                     &universe_map,
-                    &self.forest.answer(subgoal_table, answer_index).subst,
+                    self.forest
+                        .answer(subgoal_table, answer_index)
+                        .subst
+                        .clone(),
                 );
                 match strand.infer.apply_answer_subst(
                     self.context.interner(),

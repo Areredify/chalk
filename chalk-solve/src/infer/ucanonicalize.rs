@@ -10,55 +10,41 @@ impl<I: Interner> InferenceTable<I> {
     pub fn u_canonicalize<T>(
         &mut self,
         interner: &I,
-        value0: &Canonical<T>,
-    ) -> UCanonicalized<T::Result>
+        value0: Canonical<T>,
+    ) -> UCanonicalized<T>
     where
-        T: HasInterner<Interner = I> + Fold<I> + Visit<I>,
-        T::Result: HasInterner<Interner = I>,
+        T: HasInterner<Interner = I> + std::fmt::Debug,
     {
         debug_span!("u_canonicalize", "{:#?}", value0);
 
         // First, find all the universes that appear in `value`.
         let mut universes = UniverseMap::new();
 
-        for universe in value0.binders.iter(interner) {
-            universes.add(*universe.skip_kind());
+        for canonical_var_kind in value0.binders.iter(interner) {
+            let ui = match canonical_var_kind.skip_kind() {
+                CanonicalVarSource::Inference(ui) => ui,
+                CanonicalVarSource::Placeholder(PlaceholderIndex { ui, .. }) => ui,
+            };
+            universes.add(*ui);
         }
-
-        value0.value.visit_with(
-            &mut UCollector {
-                universes: &mut universes,
-                interner,
-            },
-            DebruijnIndex::INNERMOST,
-        );
 
         // Now re-map the universes found in value. We have to do this
         // in a second pass because it is only then that we know the
         // full set of universes found in the original value.
-        let value1 = value0
-            .value
-            .fold_with(
-                &mut UMapToCanonical {
-                    universes: &universes,
-                    interner,
-                },
-                DebruijnIndex::INNERMOST,
-            )
-            .unwrap();
         let binders = CanonicalVarKinds::from_iter(
             interner,
-            value0
-                .binders
-                .iter(interner)
-                .map(|pk| pk.map_ref(|&ui| universes.map_universe_to_canonical(ui).unwrap())),
+            value0.binders.iter(interner).map(|pk| {
+                pk.map_ref(|&source| {
+                    source.map_universe(|ui| universes.map_universe_to_canonical(ui).unwrap())
+                })
+            }),
         );
 
         UCanonicalized {
             quantified: UCanonical {
                 universes: universes.num_canonical_universes(),
                 canonical: Canonical {
-                    value: value1,
+                    value: value0.value,
                     binders,
                 },
             },
@@ -80,14 +66,9 @@ pub trait UniverseMapExt {
     fn add(&mut self, universe: UniverseIndex);
     fn map_universe_to_canonical(&self, universe: UniverseIndex) -> Option<UniverseIndex>;
     fn map_universe_from_canonical(&self, universe: UniverseIndex) -> UniverseIndex;
-    fn map_from_canonical<T, I>(
-        &self,
-        interner: &I,
-        canonical_value: &Canonical<T>,
-    ) -> Canonical<T::Result>
+    fn map_from_canonical<T, I>(&self, interner: &I, canonical_value: Canonical<T>) -> Canonical<T>
     where
-        T: Fold<I> + HasInterner<Interner = I>,
-        T::Result: HasInterner<Interner = I>,
+        T: HasInterner<Interner = I> + std::fmt::Debug,
         I: Interner;
 }
 impl UniverseMapExt for UniverseMap {
@@ -159,37 +140,23 @@ impl UniverseMapExt for UniverseMap {
     /// of universes, since that determines visibility, and (b) that
     /// the universe we produce does not correspond to any of the
     /// other original universes.
-    fn map_from_canonical<T, I>(
-        &self,
-        interner: &I,
-        canonical_value: &Canonical<T>,
-    ) -> Canonical<T::Result>
+    fn map_from_canonical<T, I>(&self, interner: &I, canonical_value: Canonical<T>) -> Canonical<T>
     where
-        T: Fold<I> + HasInterner<Interner = I>,
-        T::Result: HasInterner<Interner = I>,
+        T: HasInterner<Interner = I> + std::fmt::Debug,
         I: Interner,
     {
         debug_span!("map_from_canonical", ?canonical_value, universes = ?self.universes);
 
-        let binders = canonical_value
-            .binders
-            .iter(interner)
-            .map(|cvk| cvk.map_ref(|&universe| self.map_universe_from_canonical(universe)));
-
-        let value = canonical_value
-            .value
-            .fold_with(
-                &mut UMapFromCanonical {
-                    interner,
-                    universes: self,
-                },
-                DebruijnIndex::INNERMOST,
-            )
-            .unwrap();
+        let binders = CanonicalVarKinds::from_iter(
+            interner,
+            canonical_value.binders.iter(interner).map(|pk| {
+                pk.map_ref(|&source| source.map_universe(|ui| self.map_universe_from_canonical(ui)))
+            }),
+        );
 
         Canonical {
-            binders: CanonicalVarKinds::from_iter(interner, binders),
-            value,
+            binders,
+            value: canonical_value.value,
         }
     }
 }

@@ -77,7 +77,7 @@ impl<'me, I: Interner> context::ContextOps<I, SlgContext<I>> for SlgContextOps<'
     fn map_goal_from_canonical(
         &self,
         map: &UniverseMap,
-        value: &Canonical<InEnvironment<Goal<I>>>,
+        value: Canonical<InEnvironment<Goal<I>>>,
     ) -> Canonical<InEnvironment<Goal<I>>> {
         use chalk_solve::infer::ucanonicalize::UniverseMapExt;
         map.map_from_canonical(self.program.interner(), value)
@@ -86,7 +86,7 @@ impl<'me, I: Interner> context::ContextOps<I, SlgContext<I>> for SlgContextOps<'
     fn map_subst_from_canonical(
         &self,
         map: &UniverseMap,
-        value: &Canonical<AnswerSubst<I>>,
+        value: Canonical<AnswerSubst<I>>,
     ) -> Canonical<AnswerSubst<I>> {
         use chalk_solve::infer::ucanonicalize::UniverseMapExt;
         map.map_from_canonical(self.program.interner(), value)
@@ -265,7 +265,7 @@ impl<I: Interner> context::UnificationOps<I, SlgContext<I>> for TruncatingInfere
         let UCanonicalized {
             quantified,
             universes,
-        } = self.infer.u_canonicalize(interner, &canonicalized_goal);
+        } = self.infer.u_canonicalize(interner, canonicalized_goal);
         (quantified, universes)
     }
 

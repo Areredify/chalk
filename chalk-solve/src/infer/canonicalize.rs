@@ -36,6 +36,7 @@ impl<I: Interner> InferenceTable<I> {
         let mut q = Canonicalizer {
             table: self,
             free_vars: Vec::new(),
+            placeholder_vars: Vec::new(),
             max_universe: UniverseIndex::root(),
             interner,
         };
@@ -70,6 +71,7 @@ pub struct Canonicalized<T: HasInterner> {
 struct Canonicalizer<'q, I: Interner> {
     table: &'q mut InferenceTable<I>,
     free_vars: Vec<ParameterEnaVariable<I>>,
+    placeholder_vars: Vec<WithKind<I, PlaceholderIndex>>,
     max_universe: UniverseIndex,
     interner: &'q I,
 }
@@ -77,31 +79,43 @@ struct Canonicalizer<'q, I: Interner> {
 impl<'q, I: Interner> Canonicalizer<'q, I> {
     fn into_binders(self) -> CanonicalVarKinds<I> {
         let Canonicalizer {
+            interner,
             table,
             free_vars,
-            interner,
+            placeholder_vars,
             ..
         } = self;
-        CanonicalVarKinds::from_iter(
-            interner,
-            free_vars
-                .into_iter()
-                .map(|p_v| p_v.map(|v| table.universe_of_unbound_var(v))),
-        )
+
+        let free_var_iter = free_vars.into_iter().map(|f_v| {
+            f_v.map(|var| CanonicalVarSource::Inference(table.universe_of_unbound_var(var)))
+        });
+
+        let placeholder_var_iter = placeholder_vars
+            .into_iter()
+            .map(|p_v| p_v.map(|idx| CanonicalVarSource::Placeholder(idx)));
+        CanonicalVarKinds::from_iter(interner, free_var_iter.chain(placeholder_var_iter))
     }
 
-    fn add(&mut self, free_var: ParameterEnaVariable<I>) -> usize {
+    fn add_inference_var(&mut self, free_var: ParameterEnaVariable<I>) -> usize {
         self.max_universe = max(
             self.max_universe,
             self.table.universe_of_unbound_var(*free_var.skip_kind()),
         );
+        Self::add_var(&mut self.free_vars, free_var)
+    }
 
-        self.free_vars
+    fn add_placeholder_var(&mut self, placeholder_var: WithKind<I, PlaceholderIndex>) -> usize {
+        self.max_universe = max(self.max_universe, placeholder_var.skip_kind().ui);
+        Self::add_var(&mut self.placeholder_vars, placeholder_var)
+    }
+
+    fn add_var<T: Eq>(vector: &mut Vec<WithKind<I, T>>, var: WithKind<I, T>) -> usize {
+        vector
             .iter()
-            .position(|v| v.skip_kind() == free_var.skip_kind())
+            .position(|v| v.skip_kind() == var.skip_kind())
             .unwrap_or_else(|| {
-                let next_index = self.free_vars.len();
-                self.free_vars.push(free_var);
+                let next_index = vector.len();
+                vector.push(var);
                 next_index
             })
     }
@@ -121,8 +135,11 @@ where
         _outer_binder: DebruijnIndex,
     ) -> Fallible<Ty<I>> {
         let interner = self.interner;
-        self.max_universe = max(self.max_universe, universe.ui);
-        Ok(universe.to_ty(interner))
+        let bound_var = BoundVar::new(
+            DebruijnIndex::INNERMOST,
+            self.add_placeholder_var(WithKind::new(VariableKind::Ty(TyKind::General), universe)),
+        );
+        Ok(bound_var.to_ty(interner))
     }
 
     fn fold_free_placeholder_lifetime(
@@ -131,8 +148,11 @@ where
         _outer_binder: DebruijnIndex,
     ) -> Fallible<Lifetime<I>> {
         let interner = self.interner;
-        self.max_universe = max(self.max_universe, universe.ui);
-        Ok(universe.to_lifetime(interner))
+        let bound_var = BoundVar::new(
+            DebruijnIndex::INNERMOST,
+            self.add_placeholder_var(WithKind::new(VariableKind::Lifetime, universe)),
+        );
+        Ok(bound_var.to_lifetime(interner))
     }
 
     fn fold_free_placeholder_const(
@@ -142,8 +162,11 @@ where
         _outer_binder: DebruijnIndex,
     ) -> Fallible<Const<I>> {
         let interner = self.interner;
-        self.max_universe = max(self.max_universe, universe.ui);
-        Ok(universe.to_const(interner, ty.clone()))
+        let bound_var = BoundVar::new(
+            DebruijnIndex::INNERMOST,
+            self.add_placeholder_var(WithKind::new(VariableKind::Const(ty.clone()), universe)),
+        );
+        Ok(bound_var.to_const(interner, ty.clone()))
     }
 
     fn forbid_free_vars(&self) -> bool {
@@ -174,7 +197,8 @@ where
                 let free_var =
                     ParameterEnaVariable::new(VariableKind::Ty(kind), self.table.unify.find(var));
 
-                let bound_var = BoundVar::new(DebruijnIndex::INNERMOST, self.add(free_var));
+                let bound_var =
+                    BoundVar::new(DebruijnIndex::INNERMOST, self.add_inference_var(free_var));
                 debug!(position=?bound_var, "not yet unified");
                 Ok(TyData::BoundVar(bound_var.shifted_in_from(outer_binder)).intern(interner))
             }
@@ -198,7 +222,8 @@ where
             None => {
                 let free_var =
                     ParameterEnaVariable::new(VariableKind::Lifetime, self.table.unify.find(var));
-                let bound_var = BoundVar::new(DebruijnIndex::INNERMOST, self.add(free_var));
+                let bound_var =
+                    BoundVar::new(DebruijnIndex::INNERMOST, self.add_inference_var(free_var));
                 debug!(position=?bound_var, "not yet unified");
                 Ok(
                     LifetimeData::BoundVar(bound_var.shifted_in_from(outer_binder))
@@ -228,7 +253,8 @@ where
                     VariableKind::Const(ty.clone()),
                     self.table.unify.find(var),
                 );
-                let bound_var = BoundVar::new(DebruijnIndex::INNERMOST, self.add(free_var));
+                let bound_var =
+                    BoundVar::new(DebruijnIndex::INNERMOST, self.add_inference_var(free_var));
                 debug!(position = ?bound_var, "not yet unified");
                 Ok(bound_var
                     .shifted_in_from(outer_binder)

@@ -134,7 +134,7 @@ fn merge_into_guidance<I: Interner>(
     guidance: Canonical<Substitution<I>>,
     answer: &Canonical<ConstrainedSubst<I>>,
 ) -> Canonical<Substitution<I>> {
-    let mut infer = InferenceTable::new();
+    let mut infer = InferenceTable::<I>::new();
     let Canonical {
         value: ConstrainedSubst {
             subst: subst1,
@@ -155,33 +155,34 @@ fn merge_into_guidance<I: Interner>(
             // appears in the root goal. Find out the universe
             // of X.
             let universe = *root_goal.binders.as_slice(interner)[index].skip_kind();
-
+            panic!("owowowow");
             match p1.data(interner) {
                 GenericArgData::Ty(_) => (),
                 GenericArgData::Lifetime(_) => {
                     // Ignore the lifetimes from the substitution: we're just
                     // creating guidance here anyway.
-                    return infer
-                        .new_variable(universe)
-                        .to_lifetime(interner)
-                        .cast(interner);
+                    //return infer
+                    //    .new_variable(universe)
+                    //   .to_lifetime(interner)
+                    //  .cast(interner);
                 }
                 GenericArgData::Const(_) => (),
             };
 
             // Combine the two types into a new type.
-            let mut aggr = AntiUnifier {
-                infer: &mut infer,
-                universe,
-                interner,
-            };
-            aggr.aggregate_generic_args(p1, p2)
+            //let mut aggr = AntiUnifier {
+            //    infer: &mut infer,
+            //    universe,
+            //    interner,
+            //};
+            //aggr.aggregate_generic_args(p1, p2)
         })
         .collect();
 
-    let aggr_subst = Substitution::from_iter(interner, aggr_generic_args);
+    panic!();
+    //let aggr_subst = Substitution::from_iter(interner, aggr_generic_args);
 
-    infer.canonicalize(interner, &aggr_subst).quantified
+    //infer.canonicalize(interner, &aggr_subst).quantified
 }
 
 fn is_trivial<I: Interner>(interner: &I, subst: &Canonical<Substitution<I>>) -> bool {

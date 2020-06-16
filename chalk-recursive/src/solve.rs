@@ -266,11 +266,10 @@ impl<I: Interner> RecursiveInferenceTable<I> for RecursiveInferenceTableImpl<I> 
     fn u_canonicalize<T>(
         &mut self,
         interner: &I,
-        value0: &Canonical<T>,
-    ) -> (UCanonical<T::Result>, UniverseMap)
+        value0: Canonical<T>,
+    ) -> (UCanonical<T>, UniverseMap)
     where
-        T: HasInterner<Interner = I> + Fold<I> + Visit<I>,
-        T::Result: HasInterner<Interner = I>,
+        T: HasInterner<Interner = I> + std::fmt::Debug,
     {
         let res = self.infer.u_canonicalize(interner, value0);
         (res.quantified, res.universes)

@@ -1145,7 +1145,7 @@ impl<I: Interner> interner::HasInterner for VariableKind<I> {
 impl<I: Interner> Copy for VariableKind<I> where I::InternedType: Copy {}
 
 impl<I: Interner> VariableKind<I> {
-    fn to_bound_variable(&self, interner: &I, bound_var: BoundVar) -> GenericArg<I> {
+    pub fn to_bound_variable(&self, interner: &I, bound_var: BoundVar) -> GenericArg<I> {
         match self {
             VariableKind::Ty(_) => {
                 GenericArgData::Ty(TyData::BoundVar(bound_var).intern(interner)).intern(interner)
@@ -1158,6 +1158,31 @@ impl<I: Interner> VariableKind<I> {
                 ConstData {
                     ty: ty.clone(),
                     value: ConstValue::BoundVar(bound_var),
+                }
+                .intern(interner),
+            )
+            .intern(interner),
+        }
+    }
+
+    pub fn to_placeholder_variable(
+        &self,
+        interner: &I,
+        placeholder_idx: PlaceholderIndex,
+    ) -> GenericArg<I> {
+        match self {
+            VariableKind::Ty(_) => {
+                GenericArgData::Ty(TyData::Placeholder(placeholder_idx).intern(interner))
+                    .intern(interner)
+            }
+            VariableKind::Lifetime => GenericArgData::Lifetime(
+                LifetimeData::Placeholder(placeholder_idx).intern(interner),
+            )
+            .intern(interner),
+            VariableKind::Const(ty) => GenericArgData::Const(
+                ConstData {
+                    ty: ty.clone(),
+                    value: ConstValue::Placeholder(placeholder_idx),
                 }
                 .intern(interner),
             )
@@ -1313,15 +1338,42 @@ impl<I: Interner, T> WithKind<I, T> {
         }
     }
 
+    pub fn as_ref(&self) -> WithKind<I, &T> {
+        WithKind {
+            kind: self.kind.clone(),
+            value: &self.value,
+        }
+    }
+
     /// Extract the value, ignoring the variable kind.
     pub fn skip_kind(&self) -> &T {
         &self.value
     }
 }
 
-/// A variable kind with universe index.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum CanonicalVarSource {
+    Inference(UniverseIndex),
+    Placeholder(PlaceholderIndex),
+}
+
+impl CanonicalVarSource {
+    pub fn map_universe<F>(self, f: F) -> Self
+    where
+        F: FnOnce(UniverseIndex) -> UniverseIndex,
+    {
+        match self {
+            Self::Inference(ui) => Self::Inference(f(ui)),
+            Self::Placeholder(p_idx) => Self::Placeholder(PlaceholderIndex {
+                ui: f(p_idx.ui),
+                idx: p_idx.idx,
+            }),
+        }
+    }
+}
+
 #[allow(type_alias_bounds)]
-pub type CanonicalVarKind<I: Interner> = WithKind<I, UniverseIndex>;
+pub type CanonicalVarKind<I: Interner> = WithKind<I, CanonicalVarSource>;
 
 /// An alias, which is a trait indirection such as a projection or opaque type.
 #[derive(Clone, PartialEq, Eq, Hash, Fold, Visit, HasInterner, Zip)]
